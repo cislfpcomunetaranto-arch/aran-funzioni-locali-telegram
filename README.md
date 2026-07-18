@@ -1,111 +1,112 @@
 \
-from __future__ import annotations
+# Monitor ARAN – Funzioni Locali
 
-import logging
-import os
-import sys
-from pathlib import Path
+Sistema automatico per il canale Telegram:
 
-from .aran_scraper import ScraperError, fetch_latest_items
-from .storage import load_state, save_state
-from .telegram_client import TelegramError, format_message, send_message
+**Orientamenti ARAN – Funzioni Locali | CISL FP Taranto**
 
-ROOT = Path(__file__).resolve().parents[1]
-STATE_PATH = ROOT / "data" / "state.json"
+Il programma controlla il sito ufficiale ARAN, individua i nuovi orientamenti
+applicativi del Comparto Funzioni Locali e li pubblica nel canale Telegram.
 
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO").upper(),
-    format="%(asctime)s | %(levelname)s | %(message)s",
-)
-LOGGER = logging.getLogger(__name__)
+## Protezioni previste
 
+- nessun token nel codice;
+- prima esecuzione senza pubblicazione dei vecchi orientamenti;
+- controllo dei duplicati tramite ID ARAN;
+- stato salvato nel repository;
+- esecuzioni concorrenti bloccate;
+- arresto senza aggiornare lo stato quando Telegram rifiuta un messaggio;
+- modalità di prova senza pubblicazione.
 
-def env_bool(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().casefold() in {"1", "true", "yes", "sì", "si", "on"}
+## Segreti GitHub richiesti
 
+In `Impostazioni → Segreti e variabili → Actions`:
 
-def main() -> int:
-    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-    channel_id = os.getenv("TELEGRAM_CHANNEL_ID", "").strip()
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHANNEL_ID`
 
-    dry_run = env_bool("DRY_RUN", False)
-    bootstrap_only = env_bool("BOOTSTRAP_ONLY", True)
-    max_pages = int(os.getenv("MAX_LISTING_PAGES", "3"))
+Il Channel ID configurato per questo progetto è:
 
-    if not dry_run and (not token or not channel_id):
-        LOGGER.error(
-            "Mancano TELEGRAM_BOT_TOKEN o TELEGRAM_CHANNEL_ID."
-        )
-        return 2
+```text
+-1003875980575
+```
 
-    state = load_state(STATE_PATH)
-    published = set(state["published_ids"])
+## Caricamento iniziale
 
-    try:
-        items = fetch_latest_items(max_pages=max_pages)
-    except ScraperError as exc:
-        LOGGER.error("%s", exc)
-        return 3
+1. Aprire il repository `aran-funzioni-locali-telegram`.
+2. Selezionare `Add file → Upload files`.
+3. Estrarre questo ZIP sul computer.
+4. Caricare **il contenuto della cartella estratta**, mantenendo le sottocartelle.
+5. Confermare con `Commit changes`.
 
-    if not items:
-        LOGGER.error(
-            "Nessun orientamento trovato. Il sito ARAN potrebbe aver cambiato "
-            "struttura: controllare i log prima di modificare lo stato."
-        )
-        return 4
+La struttura finale deve contenere direttamente:
 
-    current_ids = {item.item_id for item in items}
+```text
+.github/workflows/monitor.yml
+src/main.py
+data/state.json
+requirements.txt
+README.md
+```
 
-    # Prima esecuzione: registra l'esistente, evitando di riversare nel canale
-    # centinaia di vecchi orientamenti.
-    if not state["initialized"] and bootstrap_only:
-        state["initialized"] = True
-        state["published_ids"] = sorted(
-            current_ids, key=int
-        )
-        save_state(STATE_PATH, state)
-        LOGGER.info(
-            "Inizializzazione completata: registrati %d orientamenti già "
-            "esistenti. Nessun messaggio pubblicato.",
-            len(current_ids),
-        )
-        return 0
+Non deve esserci una cartella esterna duplicata del tipo:
 
-    new_items = [item for item in items if item.item_id not in published]
+```text
+aran-funzioni-locali-telegram/aran-funzioni-locali-telegram/src/
+```
 
-    if not new_items:
-        state["initialized"] = True
-        save_state(STATE_PATH, state)
-        LOGGER.info("Nessun nuovo orientamento da pubblicare.")
-        return 0
+## Prima attivazione sicura
 
-    for item in new_items:
-        message = format_message(item)
-        if dry_run:
-            LOGGER.info("DRY RUN — messaggio per ID %s:\n%s", item.item_id, message)
-        else:
-            try:
-                send_message(token, channel_id, message)
-            except TelegramError as exc:
-                LOGGER.error(
-                    "Errore sull'ID %s. Lo stato non sarà aggiornato per "
-                    "questo elemento: %s",
-                    item.item_id,
-                    exc,
-                )
-                return 5
+Aprire la scheda `Actions`, selezionare:
 
-        published.add(item.item_id)
-        state["published_ids"] = sorted(published, key=int)
-        state["initialized"] = True
-        save_state(STATE_PATH, state)
-        LOGGER.info("Gestito orientamento ARAN ID %s", item.item_id)
+**Controllo orientamenti ARAN**
 
-    return 0
+Premere `Run workflow` e impostare:
 
+```text
+Prova senza pubblicare su Telegram: true
+Registra gli orientamenti esistenti senza pubblicarli: true
+```
 
-if __name__ == "__main__":
-    sys.exit(main())
+Questa esecuzione verifica il sito e registra gli orientamenti già presenti,
+senza inviare messaggi nel canale.
+
+Controllare che l'esecuzione termini con il segno verde.
+
+## Test reale del collegamento Telegram
+
+Dopo l'inizializzazione, eseguire nuovamente il workflow con:
+
+```text
+Prova senza pubblicare su Telegram: false
+Registra gli orientamenti esistenti senza pubblicarli: true
+```
+
+Non verrà pubblicato nulla se non esistono nuovi orientamenti successivi
+all'inizializzazione. Il collegamento Telegram sarà utilizzato automaticamente
+alla prima nuova pubblicazione ARAN.
+
+## Frequenza
+
+Il controllo automatico viene eseguito ogni 30 minuti. GitHub può avviare i
+workflow programmati con alcuni minuti di ritardo.
+
+## Modifica del testo dei messaggi
+
+Il formato è definito in:
+
+```text
+src/telegram_client.py
+```
+
+## Diagnostica
+
+In caso di errore:
+
+1. aprire `Actions`;
+2. selezionare l'esecuzione rossa;
+3. aprire il passaggio `Esegui il monitor`;
+4. leggere il messaggio finale.
+
+Se ARAN modifica la struttura del sito, il monitor si arresta senza segnare
+come pubblicati elementi che non è riuscito a leggere.
