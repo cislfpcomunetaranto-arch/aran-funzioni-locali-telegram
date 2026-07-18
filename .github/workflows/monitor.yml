@@ -1,4 +1,3 @@
-\
 name: Controllo orientamenti ARAN
 
 on:
@@ -15,7 +14,6 @@ on:
         default: true
         type: boolean
   schedule:
-    # GitHub usa UTC. Esecuzione ogni 30 minuti.
     - cron: "7,37 * * * *"
 
 permissions:
